@@ -8,8 +8,10 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # Load data (replace with your dataset path)
-data_path = 'your_dataset.csv'
-data = pd.read_csv(data_path)
+from datasets import load_dataset
+
+ds = load_dataset("sleeping-ai/TEKGEN-Wiki")
+
 
 @app.route('/')
 def home():
