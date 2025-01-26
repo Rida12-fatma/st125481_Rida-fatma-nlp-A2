@@ -1,66 +1,19 @@
+import streamlit as st
 import requests
 import nltk
 import re
-from nltk.corpus import stopwords
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import streamlit as st
+import os
+from nltk.corpus import stopwords
 
-# Download necessary NLTK data
+# Ensure necessary NLTK data is available
 nltk.download('punkt')
+nltk.download('punkt_tab')  # Download punkt_tab tokenizer if missing
 nltk.download('stopwords')
-nltk.download('punkt_tab')  # Download the required data package
 
-# Load the dataset
-url = "https://huggingface.co/datasets/sleeping-ai/TEKGEN-Wiki"
-response = requests.get(url)
-data = response.text
-
-# Save the data to a file
-with open("dataset.txt", "w", encoding="utf-8") as file:
-    file.write(data)
-
-# Load the dataset from file
-with open('dataset.txt', 'r', encoding='utf-8') as file:
-    text = file.read()
-
-# Tokenization
-tokens = nltk.word_tokenize(text)
-
-# Lowercasing
-tokens = [token.lower() for token in tokens]
-
-# Removing punctuation and special characters
-tokens = [re.sub(r'\W+', '', token) for token in tokens if re.sub(r'\W+', '', token)]
-
-# Removing stop words
-stop_words = set(stopwords.words('english'))
-tokens = [token for token in tokens if token not in stop_words]
-
-# Add a special token for unknown words
-tokens.append('')
-
-# Numericalization
-vocab = list(set(tokens))
-word2index = {word: i for i, word in enumerate(vocab)}
-index2word = {i: word for i, word in enumerate(vocab)}
-
-# Creating sequences
-sequence_length = 5
-sequences = []
-for i in range(len(tokens) - sequence_length):
-    sequences.append(tokens[i:i + sequence_length])
-
-# Convert sequences to numerical indices
-input_sequences = []
-for sequence in sequences:
-    input_sequences.append([word2index[word] for word in sequence])
-
-# Convert to numpy array
-input_sequences = np.array(input_sequences)
-
+# Define the LanguageModel class
 class LanguageModel(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_dim):
         super(LanguageModel, self).__init__()
@@ -78,53 +31,56 @@ class LanguageModel(nn.Module):
         return (torch.zeros(2, batch_size, self.lstm.hidden_size),
                 torch.zeros(2, batch_size, self.lstm.hidden_size))
 
-# Hyperparameters
-embedding_dim = 50
-hidden_dim = 100
-vocab_size = len(vocab)
-batch_size = 32
-epochs = 20
+# Function to load and preprocess data
+def load_and_preprocess_data(file_path):
+    with open(file_path, 'r', encoding='utf-8') as file:
+        text = file.read()
 
-# Model, loss function, optimizer
-model = LanguageModel(vocab_size, embedding_dim, hidden_dim)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+    # Tokenization
+    tokens = nltk.word_tokenize(text)
 
-# Training loop
-def train_model(model, input_sequences, criterion, optimizer, epochs):
-    model.train()
-    for epoch in range(epochs):
-        total_loss = 0
-        for i in range(0, len(input_sequences) - batch_size, batch_size):
-            inputs = torch.tensor(input_sequences[i:i + batch_size, :-1], dtype=torch.long)
-            targets = torch.tensor(input_sequences[i:i + batch_size, 1:], dtype=torch.long)
+    # Lowercasing
+    tokens = [token.lower() for token in tokens]
 
-            optimizer.zero_grad()
-            state_h, state_c = model.init_state(batch_size)
-            outputs, _ = model(inputs, (state_h, state_c))
-            loss = criterion(outputs.view(-1, vocab_size), targets.view(-1))
-            loss.backward()
-            optimizer.step()
+    # Removing punctuation and special characters
+    tokens = [re.sub(r'\W+', '', token) for token in tokens if re.sub(r'\W+', '', token)]
 
-            total_loss += loss.item()
+    # Removing stop words (optional)
+    stop_words = set(stopwords.words('english'))
+    tokens = [token for token in tokens if token not in stop_words]
 
-        avg_loss = total_loss / (len(input_sequences) // batch_size)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+    # Add a special token for unknown words
+    tokens.append('<UNK>')
 
-# Train the model
-train_model(model, input_sequences, criterion, optimizer, epochs)
+    # Numericalization
+    vocab = list(set(tokens))
+    word2index = {word: i for i, word in enumerate(vocab)}
+    index2word = {i: word for i, word in enumerate(vocab)}
 
-# Save the model's state dictionary
-torch.save(model.state_dict(), 'model.pth')
+    # Creating sequences
+    sequence_length = 5
+    sequences = []
+    for i in range(len(tokens) - sequence_length):
+        sequences.append(tokens[i:i + sequence_length])
 
-# Define the text generation function
-def generate_text(model, start_text, max_length=50):
+    # Convert sequences to numerical indices
+    input_sequences = []
+    for sequence in sequences:
+        input_sequences.append([word2index[word] for word in sequence])
+
+    # Convert to numpy array
+    input_sequences = np.array(input_sequences)
+
+    return input_sequences, vocab, word2index, index2word
+
+# Function to generate text
+def generate_text(model, start_text, max_length, word2index, index2word):
     model.eval()
     words = start_text.split()
     state_h, state_c = model.init_state(batch_size=1)
 
     for _ in range(max_length):
-        x = torch.tensor([[word2index.get(w, word2index['']) for w in words]], dtype=torch.long)
+        x = torch.tensor([[word2index.get(w, word2index['<UNK>']) for w in words]], dtype=torch.long)
         y_pred, (state_h, state_c) = model(x, (state_h, state_c))
         last_word_logits = y_pred[0][-1]
         p = torch.nn.functional.softmax(last_word_logits, dim=0).detach().numpy()
@@ -133,16 +89,50 @@ def generate_text(model, start_text, max_length=50):
 
     return ' '.join(words)
 
-# Streamlit app interface
-st.title("Text Generation with Language Model")
-st.write("Enter a text prompt and the model will generate a continuation of the text.")
+# Streamlit app
+st.title("Text Generation with Pre-trained LSTM")
 
-# Input box for user to type in a text prompt
-user_input = st.text_input("Enter text prompt:", "Harry Potter is")
+# GitHub Repo URL for model and dataset
+github_model_url = 'https://github.com/St125050/nlpassignment2/blob/main/model.pth'  # Replace with your actual repo path
+github_dataset_url = 'https://github.com/St125050/nlpassignment2/blob/main/dataset.txt'  # Replace with your actual repo path
 
-# Generate text based on user input
-if user_input:
-    with st.spinner('Generating text...'):
-        generated_text = generate_text(model, user_input)
-        st.success("Generated Text:")
-        st.write(generated_text)
+# Local paths
+model_path = 'model.pth'
+dataset_path = 'dataset.txt'
+
+# Download model and dataset from GitHub if they are not available locally
+if not os.path.exists(model_path):
+    with open(model_path, 'wb') as f:
+        f.write(requests.get(github_model_url).content)
+    st.write("Model downloaded successfully.")
+
+if not os.path.exists(dataset_path):
+    with open(dataset_path, 'wb') as f:
+        f.write(requests.get(github_dataset_url).content)
+    st.write("Dataset downloaded successfully.")
+
+# Load dataset and preprocess it
+input_sequences, vocab, word2index, index2word = load_and_preprocess_data(dataset_path)
+st.write(f"Vocabulary size: {len(vocab)}")
+st.write(f"Total sequences: {len(input_sequences)}")
+
+# Load pre-trained model
+def load_pretrained_model():
+    model = LanguageModel(len(vocab), embedding_dim=50, hidden_dim=100)
+    model.load_state_dict(torch.load(model_path))
+    model.eval()
+    return model
+
+# Hyperparameters (based on the pre-trained model)
+embedding_dim = 50
+hidden_dim = 100
+
+# Generate text with pre-trained model
+model = load_pretrained_model()  # Load the model
+
+# Text generation
+start_text = st.text_input("Enter the start text for text generation", "harry potter is")
+if st.button("Generate Text"):
+    generated_text = generate_text(model, start_text, max_length=50, word2index=word2index, index2word=index2word)
+    st.write("Generated Text:")
+    st.write(generated_text)
