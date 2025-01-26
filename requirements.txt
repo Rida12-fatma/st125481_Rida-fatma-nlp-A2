@@ -1,7 +1,5 @@
-streamlit
-numpy
-pandas
 requests
 nltk
+numpy
 torch
-pillow
+streamlit
