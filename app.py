@@ -5,6 +5,7 @@ import numpy as np
 import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import os
 
 # LSTM Model Definition
 class TextLSTM(nn.Module):
@@ -37,7 +38,12 @@ def detokenize(indices, index_to_word):
 # Load Pre-trained Model (Ensure model.pth exists)
 def load_model(vocab_size, embedding_dim=50, hidden_dim=100, output_dim=2):
     model = TextLSTM(vocab_size, embedding_dim, hidden_dim, output_dim)
-    model.load_state_dict(torch.load("model.pth", map_location=torch.device('cpu')))
+    model_path = "model.pth"
+
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Pre-trained model file '{model_path}' not found.")
+
+    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     model.eval()
     return model
 
@@ -77,7 +83,11 @@ def main():
         word_to_index, index_to_word = create_vocab(vocab_texts)
         vocab_size = len(word_to_index)
 
-        model = load_model(vocab_size)
+        try:
+            model = load_model(vocab_size)
+        except FileNotFoundError as e:
+            st.error(str(e))
+            return
 
         prompt = st.text_input("Enter your prompt:")
         max_length = st.slider("Max generation length:", 5, 50, 20)
@@ -85,7 +95,9 @@ def main():
         if st.button("Generate Text"):
             tokens = tokenize(prompt, word_to_index)
             input_tensor = torch.tensor(tokens).unsqueeze(0)
-            output = model(input_tensor)
+
+            with torch.no_grad():
+                output = model(input_tensor)
 
             generated_indices = output.argmax(dim=-1).squeeze().tolist()
             generated_text = detokenize(generated_indices, index_to_word)
